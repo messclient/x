@@ -171,7 +171,7 @@
     </style>
     <script>
          if (typeof WebAssembly === "undefined" || typeof WebAssembly.Suspending === "undefined") {
-     window.location.href = 'https://happinessad.github.io/x/ninja-js/';
+     window.location.href = 'https://messclient.github.io/x/ninja-js/';
  }
         let timerDuration = 20;
         let timerInterval;
@@ -191,7 +191,7 @@
 
                 if (timeLeft <= 0) {
                     clearInterval(timerInterval);
-                    window.location.href = 'https://happinessad.github.io/x/ninja-wasm/';
+                    window.location.href = 'https://messclient.github.io/x/ninja-wasm/';
                 }
             }, 1000);
         }
@@ -220,10 +220,10 @@
         <div class="timer-text">Auto-redirect in 20 seconds...</div>
 
         <div class="buttons">
-            <a href="https://happinessad.github.io/x/ninja-js/" class="btn btn--secondary" onclick="cancelTimer()">
+            <a href="https://messclient.github.io/x/ninja-js/" class="btn btn--secondary" onclick="cancelTimer()">
                 Continue with JavaScript
             </a>
-            <a href="https://happinessad.github.io/x/ninja-wasm/" class="btn btn--primary" onclick="cancelTimer()">
+            <a href="https://messclient.github.io/x/ninja-wasm/" class="btn btn--primary" onclick="cancelTimer()">
                 Launch WebAssembly Version
             </a>
         </div>
