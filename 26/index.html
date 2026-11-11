@@ -23,7 +23,12 @@
       const DB_NAME = 'loaderDB';
       const DB_VERSION = 1;
       const STORE_NAME = 'files';
-      const URL_TO_LOAD = 'https://messclient.github.io/x/26/v02.bin';
+      const CLIENT_URL = 'https://messclient.github.io/x/26/v02.bin';
+
+      // Cache by file name only. Moving the client to another domain/path keeps
+      // the cache valid, and renaming the versioned file (v02.bin -> v03.bin)
+      // is what forces a fresh download.
+      const CLIENT_FILE = CLIENT_URL.substring(CLIENT_URL.lastIndexOf('/') + 1);
 
       function openDB() {
         return new Promise((resolve, reject) => {
@@ -39,14 +44,41 @@
         });
       }
 
-      function getFile(db, url) {
+      function getFile(db, key) {
         return new Promise((resolve, reject) => {
           const transaction = db.transaction([STORE_NAME], 'readonly');
           const store = transaction.objectStore(STORE_NAME);
-          const request = store.get(url);
+          const request = store.get(key);
           request.onsuccess = (e) => resolve(e.target.result);
           request.onerror = (e) => reject(e.target.error);
         });
+      }
+
+      function getAllKeys(db) {
+        return new Promise((resolve, reject) => {
+          const transaction = db.transaction([STORE_NAME], 'readonly');
+          const store = transaction.objectStore(STORE_NAME);
+          const request = store.getAllKeys();
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = (e) => reject(e.target.error);
+        });
+      }
+
+      // The previous loader keyed entries by full URL. Reuse such an entry (e.g.
+      // cached under the old domain) instead of downloading the client again.
+      async function migrateLegacyEntry(db) {
+        const keys = await getAllKeys(db);
+        const legacyKey = keys.find((key) =>
+          typeof key === 'string' && key !== CLIENT_FILE && key.endsWith('/' + CLIENT_FILE)
+        );
+        if (!legacyKey) return null;
+
+        const legacy = await getFile(db, legacyKey);
+        if (!legacy || !legacy.content) return null;
+
+        await saveFile(db, { url: CLIENT_FILE, content: legacy.content });
+        await deleteFile(db, legacyKey).catch(() => {});
+        return legacy;
       }
 
       function saveFile(db, file) {
@@ -54,6 +86,16 @@
           const transaction = db.transaction([STORE_NAME], 'readwrite');
           const store = transaction.objectStore(STORE_NAME);
           const request = store.put(file);
+          request.onsuccess = () => resolve();
+          request.onerror = (e) => reject(e.target.error);
+        });
+      }
+
+      function deleteFile(db, key) {
+        return new Promise((resolve, reject) => {
+          const transaction = db.transaction([STORE_NAME], 'readwrite');
+          const store = transaction.objectStore(STORE_NAME);
+          const request = store.delete(key);
           request.onsuccess = () => resolve();
           request.onerror = (e) => reject(e.target.error);
         });
@@ -67,13 +109,10 @@
         }
       }
 
-      function loadFile(url, cachedETag) {
+      function loadFile(url) {
         return new Promise((resolve, reject) => {
           const xhr = new XMLHttpRequest();
           xhr.open('GET', url, true);
-          if (cachedETag) {
-            xhr.setRequestHeader('If-None-Match', cachedETag);
-          }
           xhr.responseType = 'text';
 
           xhr.onprogress = (e) => {
@@ -84,11 +123,8 @@
 
           xhr.onreadystatechange = () => {
             if (xhr.readyState === XMLHttpRequest.DONE) {
-              if (xhr.status === 304) {
-                resolve({ fromCache: true });
-              } else if (xhr.status >= 200 && xhr.status < 300) {
-                const etag = xhr.getResponseHeader('ETag');
-                resolve({ data: xhr.responseText, etag });
+              if (xhr.status >= 200 && xhr.status < 300) {
+                resolve(xhr.responseText);
               } else {
                 reject('Error loading file: ' + xhr.status);
               }
@@ -99,27 +135,34 @@
         });
       }
 
+      function render(content) {
+        document.open();
+        document.write(content);
+        document.close();
+      }
+
       async function init() {
         try {
           const db = await openDB();
-          let cached = await getFile(db, URL_TO_LOAD);
-          const cachedETag = cached ? cached.etag : null;
 
-          const result = await loadFile(URL_TO_LOAD, cachedETag);
-
-          let fileContent;
-          if (result.fromCache && cached) {
-            fileContent = cached.content;
+          // Cache hit: no network request at all.
+          let cached = await getFile(db, CLIENT_FILE);
+          if (!cached || !cached.content) {
+            cached = await migrateLegacyEntry(db);
+          }
+          if (cached && cached.content) {
             updateProgress(100);
-          } else {
-            fileContent = result.data;
-            await saveFile(db, { url: URL_TO_LOAD, content: fileContent, etag: result.etag });
+            render(cached.content);
+            return;
           }
 
-          document.open();
-          document.write(fileContent);
-          document.close();
+          const fileContent = await loadFile(CLIENT_URL);
+          await saveFile(db, { url: CLIENT_FILE, content: fileContent });
 
+          // Drop the entry written by the old URL-keyed loader to reclaim space.
+          await deleteFile(db, CLIENT_URL).catch(() => {});
+
+          render(fileContent);
         } catch (e) {
           console.error(e);
           document.body.innerHTML = '<h2 style="color:red">Error</h2><p>' + e + '</p>';
